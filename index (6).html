@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phrasal Invaders - Low Poly Multiplayer</title>
+    <!-- PeerJS para conexión multijugador P2P directa sin servidores -->
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <!-- QRCode.js para la generación del código QR en el lobby -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #050510; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #fff; }
+        
+        #game-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+        
+        /* Lienzo del juego retro */
+        canvas { display: block; background: radial-gradient(circle, #0d0d25 0%, #050510 100%); width: 100%; height: 100%; }
+
+        /* UI Superpuesta */
+        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; }
+        .ui-element { pointer-events: auto; }
+
+        /* Pantallas de Menú / Lobby */
+        .screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5, 5, 16, 0.95); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; transition: opacity 0.3s ease; }
+        .hidden { display: none !important; opacity: 0; pointer-events: none; }
+
+        h1 { font-size: 3.5rem; color: #00f0ff; text-shadow: 0 0 20px rgba(0,240,255,0.5); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 4px; font-weight: 900; }
+        h2 { font-size: 1.8rem; color: #ff007f; margin-bottom: 30px; font-weight: 400; }
+
+        /* Contenedor del Lobby de Selección */
+        .lobby-panel { display: flex; gap: 40px; background: rgba(20, 20, 45, 0.6); padding: 40px; border-radius: 20px; border: 2px solid #333366; max-width: 900px; width: 90%; }
+        .panel-left { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+        .panel-right { flex: 1; display: flex; flex-direction: column; align-items: center; background: rgba(10,10,25,0.8); padding: 20px; border-radius: 15px; border: 1px solid #444488; }
+
+        /* Botones de Nivel */
+        .level-grid { display: grid; grid-template-columns: repeat(5, 150px); gap: 15px; margin-bottom: 30px; justify-content: center; }
+        .btn-level { background: #151530; border: 2px solid #00f0ff; color: #00f0ff; padding: 15px; font-size: 1.2rem; font-weight: bold; border-radius: 10px; cursor: pointer; transition: all 0.2s ease; text-align: center; }
+        .btn-level:hover, .btn-level.active { background: #00f0ff; color: #050510; box-shadow: 0 0 15px rgba(0,240,255,0.6); transform: translateY(-2px); }
+        
+        .btn-start { background: #ff007f; border: none; color: white; padding: 18px 40px; font-size: 1.5rem; font-weight: bold; border-radius: 12px; cursor: pointer; transition: all 0.2s ease; text-transform: uppercase; letter-spacing: 2px; box-shadow: 0 0 20px rgba(255,0,127,0.4); margin-top: 20px; align-self: center; }
+        .btn-start:hover { background: #ff3399; box-shadow: 0 0 30px rgba(255,0,127,0.8); transform: scale(1.05); }
+
+        /* QR y Lista de Jugadores */
+        #qrcode { background: white; padding: 12px; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 0 20px rgba(255,255,255,0.2); }
+        .room-code { font-size: 1.3rem; color: #fff; margin-bottom: 15px; font-weight: bold; background: #222244; padding: 5px 15px; border-radius: 5px; }
+        .player-list-container { width: 100%; height: 180px; overflow-y: auto; border-top: 1px solid #333366; padding-top: 10px; }
+        .player-item { display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.05); padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 0.95rem; border-left: 3px solid #ff007f; }
+        .btn-kick { background: #ff3333; border: none; color: white; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; font-weight: bold; transition: background 0.2s; }
+        .btn-kick:hover { background: #ff0000; }
+
+        /* Header de la partida activa */
+        .game-header { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+        .hud-box { background: rgba(15, 15, 35, 0.75); border: 1px solid #333366; padding: 10px 20px; border-radius: 10px; font-size: 1.1rem; font-weight: 600; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }
+        .meaning-banner { background: rgba(0, 240, 255, 0.15); border: 2px solid #00f0ff; color: #00f0ff; font-size: 1.6rem; padding: 12px 40px; border-radius: 12px; text-transform: uppercase; font-weight: bold; text-shadow: 0 0 10px rgba(0,240,255,0.3); box-shadow: inset 0 0 15px rgba(0,240,255,0.1); max-width: 50%; text-align: center; }
+        
+        /* Corazones y Animaciones */
+        .hearts-container { display: flex; gap: 8px; }
+        .heart { width: 25px; height: 25px; fill: #ff007f; filter: drop-shadow(0 0 5px rgba(255,0,127,0.6)); transition: transform 0.2s ease; }
+        @keyframes heart-shake {
+            0% { transform: scale(1) rotate(0deg); filter: drop-shadow(0 0 5px rgba(255,0,127,0.6)); }
+            20% { transform: scale(1.4) rotate(-15deg); filter: brightness(2) drop-shadow(0 0 15px #ff0000); }
+            40% { transform: scale(1.2) rotate(15deg); }
+            60% { transform: scale(1.3) rotate(-10deg); }
+            80% { transform: scale(1.1) rotate(10deg); }
+            100% { transform: scale(1) rotate(0deg); }
+        }
+        .heart-damaged { animation: heart-shake 0.6s cubic-bezier(.36,.07,.19,.97) both; }
+        
+        /* Alerta de pantalla roja cuando se pierde vida */
+        #damage-flash { position: absolute; top:0; left:0; width:100%; height:100%; background: rgba(255,0,0,0.25); pointer-events:none; opacity:0; z-index:5; transition: opacity 0.1s ease; }
+
+        /* Pantalla de Fin de Juego */
+        .gameover-box { background: rgba(20, 10, 25, 0.9); border: 3px solid #ff0055; padding: 50px; border-radius: 20px; text-align: center; max-width: 500px; width: 90%; box-shadow: 0 0 40px rgba(255,0,85,0.5); }
+        .score-display { font-size: 1.8rem; margin: 20px 0; color: #00f0ff; }
+    </style>
+</head>
+<body>
+
+    <div id="damage-flash"></div>
+
+    <div id="game-container">
+        <!-- Lienzo donde se renderizan las naves con geometría pura estilo low-poly -->
+        <canvas id="gameCanvas"></canvas>
+
+        <div class="ui-layer">
+            <!-- HUD Activo durante la partida -->
+            <div class="game-header">
+                <div class="hud-box ui-element" style="color: #00f0ff;">
+                    NIVEL: <span id="hud-level">A1</span>
+                </div>
+                <div class="meaning-banner ui-element" id="hud-meaning">
+                    CARGANDO SIGNIFICADO...
+                </div>
+                <div class="hud-box ui-element">
+                    <div class="hearts-container" id="hearts-box">
+                        <!-- Generados dinámicamente -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Pie de juego opcional o puntuación en tiempo real -->
+            <div style="display:flex; justify-content: space-between; width:100%;">
+                <div class="hud-box ui-element" style="color: #ffb700;">SCORE: <span id="hud-score">0000</span></div>
+                <div class="hud-box ui-element" style="font-size:0.85rem; color:#888;">[A/D] o Flechas: Mover • [Espacio]: Disparar</div>
+            </div>
+        </div>
+
+        <!-- PANTALLA PRINCIPAL: MENU / LOBBY MULTIJUGADOR -->
+        <div id="lobby-screen" class="screen">
+            <h1>Phrasal Invaders</h1>
+            <h2>Edición Educativa Low-Poly Multijugador</h2>
+            
+            <div class="lobby-panel">
+                <div class="panel-left">
+                    <h3 style="margin-top:0; color:#00f0ff; font-weight:600;">1. Selecciona el Nivel de Inglés</h3>
+                    <div class="level-grid">
+                        <div class="btn-level active" onclick="selectLevel('A1')">A1</div>
+                        <div class="btn-level" onclick="selectLevel('A2')">A2</div>
+                        <div class="btn-level" onclick="selectLevel('B1')">B1</div>
+                        <div class="btn-level" onclick="selectLevel('B2')">B2</div>
+                        <div class="btn-level" onclick="selectLevel('C1')">C1</div>
+                    </div>
+                    
+                    <p style="color:#aaa; font-size:0.95rem; line-height:1.5; margin-bottom:0;">
+                        Cada oleada generará una fila de 3 naves espaciales enemigas. Cada una portará un phrasal verb diferente, desplazándose a velocidad moderada (0.7x) en zig-zag. ¡Derriba la nave correcta correspondiente al significado superior!
+                    </p>
+                    <button class="btn-start" onclick="startGame()">Iniciar Defensa</button>
+                </div>
+                
+                <div class="panel-right">
+                    <h3 style="margin-top:0; color:#ff007f; text-align:center;">Control Remoto QR</h3>
+                    <div id="qrcode"></div>
+                    <div class="room-code">SALA ID: <span id="room-id-tag">----</span></div>
+                    
+                    <div style="width:100%; display:flex; justify-content:space-between; margin-bottom:5px; font-size:0.85rem; color:#aaa;">
+                        <span>Jugadores en la red:</span>
+                        <span id="player-count">0</span>
+                    </div>
+                    <div class="player-list-container" id="player-list">
+                        <!-- Listado en tiempo real -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PANTALLA DE GAME OVER -->
+        <div id="gameover-screen" class="screen hidden">
+            <div class="gameover-box">
+                <h1 style="color:#ff0055; text-shadow:0 0 20px rgba(255,0,85,0.4);">Defensa Caída</h1>
+                <h3 style="color:#aaa; margin-bottom:10px;">Los verbos incorrectos invadieron tu órbita.</h3>
+                <div class="score-display">Puntuación Final: <span id="final-score">0</span></div>
+                <button class="btn-start" onclick="resetToLobby()" style="background:#00f0ff; color:#050510; box-shadow:0 0 20px rgba(0,240,255,0.3);">Regresar al Lobby</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================================
+        // 1. BASE DE DATOS DE PHRASAL VERBS (30 por nivel, distribuidos minuciosamente)
+        // ============================================================================
+        const verbDatabase = {
+            'A1': [
+                { correct: 'Get up', incorrect: ['Go up', 'Sit up'], spanish: 'Levantarse de la cama' },
+                { correct: 'Go out', incorrect: ['Go in', 'Go off'], spanish: 'Salir de fiesta o pasear' },
+                { correct: 'Come in', incorrect: ['Come out', 'Come back'], spanish: 'Entrar a un lugar' },
+                { correct: 'Sit down', incorrect: ['Sit up', 'Stand down'], spanish: 'Sentarse' },
+                { correct: 'Stand up', incorrect: ['Stand by', 'Sit up'], spanish: 'Ponerse de pie' },
+                { correct: 'Turn on', incorrect: ['Turn in', 'Turn up'], spanish: 'Encender (luces, tv)' },
+                { correct: 'Turn off', incorrect: ['Turn down', 'Turn out'], spanish: 'Apagar (luces, aparato)' },
+                { correct: 'Wake up', incorrect: ['Wake in', 'Get up'], spanish: 'Despertarse' },
+                { correct: 'Come back', incorrect: ['Come for', 'Go back'], spanish: 'Regresar o volver' },
+                { correct: 'Look at', incorrect: ['Look for', 'Look in'], spanish: 'Mirar fijamente algo' },
+                { correct: 'Listen to', incorrect: ['Hear to', 'Listen in'], spanish: 'Escuchar a alguien/algo' },
+                { correct: 'Put on', incorrect: ['Put in', 'Take on'], spanish: 'Vestirse o ponerse ropa' },
+                { correct: 'Take off', incorrect: ['Take out', 'Put off'], spanish: 'Quitarse la ropa o despegar' },
+                { correct: 'Pick up', incorrect: ['Drop up', 'Take up'], spanish: 'Recoger del suelo o buscar' },
+                { correct: 'Put down', incorrect: ['Put off', 'Set down'], spanish: 'Soltar o dejar en el suelo' },
+                { correct: 'Run away', incorrect: ['Run off', 'Fly away'], spanish: 'Huir o escapar corriendo' },
+                { correct: 'Go back', incorrect: ['Come back', 'Go in'], spanish: 'Regresar a un punto de origen' },
+                { correct: 'Look for', incorrect: ['Look after', 'Look at'], spanish: 'Buscar un objeto perdido' },
+                { correct: 'Fill in', incorrect: ['Fill up', 'Write in'], spanish: 'Rellenar un formulario' },
+                { correct: 'Try on', incorrect: ['Try out', 'Put on'], spanish: 'Probarse una prenda de ropa' },
+                { correct: 'Hurry up', incorrect: ['Go fast', 'Rush up'], spanish: 'Darse prisa' },
+                { correct: 'Clean up', incorrect: ['Wash up', 'Clear off'], spanish: 'Limpiar a fondo un lugar' },
+                { correct: 'Grow up', incorrect: ['Get big', 'Live up'], spanish: 'Crecer (hacerse adulto)' },
+                { correct: 'Log in', incorrect: ['Log on', 'Sign up'], spanish: 'Iniciar sesión' },
+                { correct: 'Log out', incorrect: ['Log off', 'Leave in'], spanish: 'Cerrar sesión' },
+                { correct: 'Write down', incorrect: ['Note down', 'Put down'], spanish: 'Anotar algo en papel' },
+                { correct: 'Break down', incorrect: ['Stop working', 'Fall down'], spanish: 'Averiarse (un auto o máquina)' },
+                { correct: 'Call back', incorrect: ['Phone back', 'Call in'], spanish: 'Devolver una llamada' },
+                { correct: 'Give up', incorrect: ['Drop up', 'Stop trying'], spanish: 'Rendirse o dejar de intentar' },
+                { correct: 'Pay back', incorrect: ['Give money', 'Pay return'], spanish: 'Devolver dinero prestado' }
+            ],
+            'A2': [
+                { correct: 'Bring back', incorrect: ['Take back', 'Fetch back'], spanish: 'Devolver algo comprado/prestado' },
+                { correct: 'Call off', incorrect: ['Cancel off', 'Drop off'], spanish: 'Cancelar un evento o reunión' },
+                { correct: 'Carry on', incorrect: ['Go on', 'Keep on'], spanish: 'Continuar haciendo algo' },
+                { correct: 'Check in', incorrect: ['Register in', 'Log in'], spanish: 'Registrarse (hotel, aeropuerto)' },
+                { correct: 'Check out', incorrect: ['Leave out', 'Pay check'], spanish: 'Dejar la habitación del hotel' },
+                { correct: 'Come from', incorrect: ['Be from', 'Origin in'], spanish: 'Ser originario de un país' },
+                { correct: 'Cut off', incorrect: ['Cut down', 'Disconnect'], spanish: 'Interrumpir un servicio o llamada' },
+                { correct: 'Drop off', incorrect: ['Fall off', 'Leave down'], spanish: 'Dejar a alguien en un coche' },
+                { correct: 'End up', incorrect: ['Finish up', 'Turn up'], spanish: 'Terminar en una situación imprevista' },
+                { correct: 'Find out', incorrect: ['Discover', 'Look up'], spanish: 'Aprender o descubrir información' },
+                { correct: 'Get along', incorrect: ['Get on', 'Live together'], spanish: 'Tener una buena relación' },
+                { correct: 'Get in', incorrect: ['Enter in', 'Sit in'], spanish: 'Subirse a un carro o entrar' },
+                { correct: 'Get out', incorrect: ['Leave out', 'Go out'], spanish: 'Salir de un carro o recinto cerrado' },
+                { correct: 'Give back', incorrect: ['Return back', 'Hand back'], spanish: 'Devolver un objeto a su dueño' },
+                { correct: 'Give away', incorrect: ['Donated', 'Present up'], spanish: 'Regalar o donar algo gratis' },
+                { correct: 'Go on', incorrect: ['Carry on', 'Proceed up'], spanish: 'Continuar o suceder algo' },
+                { correct: 'Hang up', incorrect: ['Ring off', 'Stop call'], spanish: 'Colgar el teléfono' },
+                { correct: 'Hold on', incorrect: ['Wait on', 'Stay on'], spanish: 'Esperar un momento breve' },
+                { correct: 'Keep on', incorrect: ['Continue on', 'Stay up'], spanish: 'Hacer algo repetidamente' },
+                { correct: 'Look after', incorrect: ['Take care', 'Look for'], spanish: 'Cuidar de un niño, animal o enfermo' },
+                { correct: 'Look forward to', incorrect: ['Expect to', 'Hope to'], spanish: 'Esperar algo con ansias' },
+                { correct: 'Pass out', incorrect: ['Faint up', 'Fall out'], spanish: 'Desmayarse o perder el conocimiento' },
+                { correct: 'Run out of', incorrect: ['Finish with', 'Empty of'], spanish: 'Quedarse sin provisiones/gasolina' },
+                { correct: 'Send back', incorrect: ['Return send', 'Mail back'], spanish: 'Reenviar o devolver un paquete' },
+                { correct: 'Take back', incorrect: ['Return take', 'Bring out'], spanish: 'Retractarse o devolver un artículo' },
+                { correct: 'Think over', incorrect: ['Ponder up', 'Consider back'], spanish: 'Pensar detenidamente una decisión' },
+                { correct: 'Throw away', incorrect: ['Bin up', 'Discard off'], spanish: 'Tirar algo a la basura' },
+                { correct: 'Turn up', incorrect: ['Appear up', 'Show up'], spanish: 'Aparecer o llegar de repente' },
+                { correct: 'Warm up', incorrect: ['Heat up', 'Prep up'], spanish: 'Calentar antes de hacer ejercicio' },
+                { correct: 'Wash up', incorrect: ['Clean dishes', 'Sink up'], spanish: 'Lavar los platos e instrumentos de cocina' }
+            ],
+            'B1': [
+                { correct: 'Break up', incorrect: ['Split down', 'Finish out'], spanish: 'Terminar una relación sentimental' },
+                { correct: 'Bring up', incorrect: ['Raise up', 'Grow back'], spanish: 'Mencionar un tema o criar niños' },
+                { correct: 'Calm down', incorrect: ['Relax off', 'Quiet up'], spanish: 'Tranquilizarse o calmar a alguien' },
+                { correct: 'Catch up', incorrect: ['Reach up', 'Match on'], spanish: 'Alcanzar el nivel de otro' },
+                { correct: 'Count on', incorrect: ['Trust on', 'Depend in'], spanish: 'Contar con alguien o confiar' },
+                { correct: 'Cheer up', incorrect: ['Happy up', 'Smile on'], spanish: 'Alegrar o animar a alguien' },
+                { correct: 'Come up with', incorrect: ['Invent up', 'Think out'], spanish: 'Idear o proponer un plan/idea' },
+                { correct: 'Cut down on', incorrect: ['Reduce in', 'Less up'], spanish: 'Consumir menos cantidad de algo' },
+                { correct: 'Deal with', incorrect: ['Handle with', 'Manage on'], spanish: 'Lidiar con un problema o situación' },
+                { correct: 'Do without', incorrect: ['Skip on', 'Miss out'], spanish: 'Arreglárselas sin algo' },
+                { correct: 'Dress up', incorrect: ['Suit up', 'Clothe up'], spanish: 'Vestirse de gala o disfrazarse' },
+                { correct: 'Fall out', incorrect: ['Argue off', 'Fight down'], spanish: 'Discutir y enemistarse con alguien' },
+                { correct: 'Get over', incorrect: ['Recover off', 'Pass through'], spanish: 'Recuperarse de una enfermedad/ruptura' },
+                { correct: 'Go ahead', incorrect: ['Move forward', 'Proceed on'], spanish: 'Proceder o continuar con un permiso' },
+                { correct: 'Hang out', incorrect: ['Spend time', 'Chill up'], spanish: 'Pasar el rato libre con amigos' },
+                { correct: 'Join in', incorrect: ['Enter on', 'Participate up'], spanish: 'Unirse a una actividad grupal' },
+                { correct: 'Let down', incorrect: ['Disappoint', 'Fail down'], spanish: 'Decepcionar a alguien' },
+                { correct: 'Look up', incorrect: ['Search word', 'Check up'], spanish: 'Buscar información en diccionario/web' },
+                { correct: 'Make up', incorrect: ['Invent story', 'Create up'], spanish: 'Inventar una excusa o reconciliarse' },
+                { correct: 'Move on', incorrect: ['Pass next', 'Go over'], spanish: 'Superar el pasado y avanzar' },
+                { correct: 'Own up', incorrect: ['Confess up', 'Admit down'], spanish: 'Admitir o confesar una culpa' },
+                { correct: 'Put off', incorrect: ['Delay up', 'Postpone off'], spanish: 'Posponer o retrasar una tarea' },
+                { correct: 'Put up with', incorrect: ['Tolerate', 'Stand on'], spanish: 'Soportar o tolerar algo molesto' },
+                { correct: 'Set up', incorrect: ['Establish', 'Build on'], spanish: 'Instalar, configurar o fundar algo' },
+                { correct: 'Show off', incorrect: ['Boast up', 'Display out'], spanish: 'Presumir o alardear de algo' },
+                { correct: 'Slow down', incorrect: ['Brake up', 'Less fast'], spanish: 'Reducir la velocidad' },
+                { correct: 'Take up', incorrect: ['Start hobby', 'Begin up'], spanish: 'Comenzar a practicar un pasatiempo' },
+                { correct: 'Turn down', incorrect: ['Reject', 'Refuse up'], spanish: 'Rechazar una oferta o bajar volumen' },
+                { correct: 'Work out', incorrect: ['Exercise', 'Solve up'], spanish: 'Hacer ejercicio físico o resolver un cálculo' },
+                { correct: 'Sort out', incorrect: ['Organize', 'Solve down'], spanish: 'Resolver u ordenar un problema/caos' }
+            ],
+            'B2': [
+                { correct: 'Back down', incorrect: ['Retreat up', 'Give low'], spanish: 'Ceder en una postura o discusión' },
+                { correct: 'Blow up', incorrect: ['Explode up', 'Burst off'], spanish: 'Explotar o inflar un globo' },
+                { correct: 'Break out', incorrect: ['Escape sudden', 'Start off'], spanish: 'Estallar (guerra) o brotar (epidemia)' },
+                { correct: 'Bring about', incorrect: ['Cause up', 'Lead on'], spanish: 'Provocar, causar o hacer que suceda' },
+                { correct: 'Call in on', incorrect: ['Visit brief', 'Drop up'], spanish: 'Hacer una visita corta a alguien' },
+                { correct: 'Come across', incorrect: ['Find chance', 'Meet up'], spanish: 'Encontrarse con algo/alguien por azar' },
+                { correct: 'Drop out', incorrect: ['Quit school', 'Leave down'], spanish: 'Abandonar los estudios o una carrera' },
+                { correct: 'Face up to', incorrect: ['Confront', 'Look into'], spanish: 'Afrontar o aceptar una realidad difícil' },
+                { correct: 'Get through', incorrect: ['Finish task', 'Pass call'], spanish: 'Terminar un trabajo duro o comunicarse' },
+                { correct: 'Go over', incorrect: ['Review back', 'Check through'], spanish: 'Revisar o examinar detalladamente' },
+                { correct: 'Hold back', incorrect: ['Restrain', 'Keep down'], spanish: 'Contener las emociones o retrasar' },
+                { correct: 'Lay off', incorrect: ['Fire staff', 'Dismiss up'], spanish: 'Despedir trabajadores por razones económicas' },
+                { correct: 'Look down on', incorrect: ['Despise', 'See low'], spanish: 'Menospreciar o mirar por encima del hombro' },
+                { correct: 'Look up to', incorrect: ['Admire', 'Respect up'], spanish: 'Admirar y respetar profundamente a alguien' },
+                { correct: 'Make out', incorrect: ['Understand', 'See clear'], spanish: 'Alcanzar a ver, oír o entender algo' },
+                { correct: 'Pass away', incorrect: ['Die off', 'Go out'], spanish: 'Fallecer o morir de forma respetuosa' },
+                { correct: 'Point out', incorrect: ['Indicate', 'Show out'], spanish: 'Señalar o hacer notar un hecho' },
+                { correct: 'Pull through', incorrect: ['Survive off', 'Recover up'], spanish: 'Sobrevivir a una enfermedad o crisis' },
+                { correct: 'Put out', incorrect: ['Extinguish', 'Turn off'], spanish: 'Apagar un fuego o un cigarrillo' },
+                { correct: 'Rule out', incorrect: ['Exclude', 'Dismiss off'], spanish: 'Descartar una posibilidad' },
+                { correct: 'Run over', incorrect: ['Hit car', 'Knock down'], spanish: 'Atropellar con un vehículo' },
+                { correct: 'Set off', incorrect: ['Start journey', 'Go away'], spanish: 'Salir de viaje o activar una alarma' },
+                { correct: 'Stand out', incorrect: ['Be prominent', 'Notice up'], spanish: 'Destacar o resaltar sobre el resto' },
+                { correct: 'Take in', incorrect: ['Deceive', 'Absorb up'], spanish: 'Engañar a alguien o asimilar información' },
+                { correct: 'Take over', incorrect: ['Control take', 'Assume up'], spanish: 'Asumir el control o mando de algo' },
+                { correct: 'Tell off', incorrect: ['Scold', 'Reprimand in'], spanish: 'Regañar o reprender con severidad' },
+                { correct: 'Turn out', incorrect: ['Result up', 'End up'], spanish: 'Resultar ser o asistir a un evento' },
+                { correct: 'Wear out', incorrect: ['Exhaust', 'Erode up'], spanish: 'Agotar por completo o desgastar ropa' },
+                { correct: 'Wipe out', incorrect: ['Eradicate', 'Destroy off'], spanish: 'Destruir por completo o exterminar' },
+                { correct: 'Back up', incorrect: ['Support', 'Copy save'], spanish: 'Apoyar a alguien o hacer copia de seguridad' }
+            ],
+            'C1': [
+                { correct: 'Abide by', incorrect: ['Comply on', 'Stick under'], spanish: 'Acatar, cumplir o respetar una ley' },
+                { correct: 'Be up to', incorrect: ['Plotting', 'Plan off'], spanish: 'Estar tramando algo o ser deber de' },
+                { correct: 'Botch up', incorrect: ['Mangle up', 'Ruin down'], spanish: 'Arruinar o hacer una chapuza con algo' },
+                { correct: 'Bring off', incorrect: ['Succeed in', 'Achieve out'], spanish: 'Lograr éxito en algo sumamente difícil' },
+                { correct: 'Brush up on', incorrect: ['Review quick', 'Clean on'], spanish: 'Repasar o refrescar conocimientos' },
+                { correct: 'Chime in', incorrect: ['Interrupt', 'Talk on'], spanish: 'Intervenir o sumarse a una conversación' },
+                { correct: 'Clamour for', incorrect: ['Demand loud', 'Ask up'], spanish: 'Exigir algo a gritos de forma ruidosa' },
+                { correct: 'Conjure up', incorrect: ['Evoke image', 'Magic out'], spanish: 'Evocar imágenes o recuerdos de la nada' },
+                { correct: 'Dwelling on', incorrect: ['Overthinking', 'Stay in'], spanish: 'Obsesionarse o dar vueltas a un problema' },
+                { correct: 'Eke out', incorrect: ['Stretch supply', 'Live low'], spanish: 'Hacer durar a duras penas provisiones/sueldo' },
+                { correct: 'Fall back on', incorrect: ['Use resort', 'Rely back'], spanish: 'Recurrir a algo como último plan de reserva' },
+                { correct: 'Fleshing out', incorrect: ['Detailing', 'Add weight'], spanish: 'Añadir detalles o sustancia a una idea' },
+                { correct: 'Fritter away', incorrect: ['Waste trivial', 'Spend off'], spanish: 'Despilfarrar el tiempo o el dinero en nada' },
+                { correct: 'Gain on', incorrect: ['Catch distance', 'Win up'], spanish: 'Acercarse a alguien que va delante' },
+                { correct: 'Gloss over', incorrect: ['Conceal error', 'Shine down'], spanish: 'Pasar por alto o maquillar un error grave' },
+                { correct: 'Hammer out', incorrect: ['Negotiate hard', 'Beat down'], spanish: 'Llegar a un acuerdo tras dura negociación' },
+                { correct: 'Hinge on', incorrect: ['Depend fully', 'Hook on'], spanish: 'Depender enteramente de un factor' },
+                { correct: 'Iron out', incorrect: ['Resolve issue', 'Press down'], spanish: 'Resolver pequeñas asperezas o detalles' },
+                { correct: 'Lap up', incorrect: ['Enjoy eager', 'Drink out'], spanish: 'Aceptar con entusiasmo elogios o historias' },
+                { correct: 'Leap at', incorrect: ['Accept eager', 'Jump on'], spanish: 'Aceptar una oportunidad de inmediato' },
+                { correct: 'Measure up to', incorrect: ['Meet standards', 'Match top'], spanish: 'Estar a la altura de las expectativas' },
+                { correct: 'Mull over', incorrect: ['Ponder deep', 'Think long'], spanish: 'Reflexionar profundamente durante días' },
+                { correct: 'Pan out', incorrect: ['Succeed turn', 'Result good'], spanish: 'Resultar o salir bien un asunto/proyecto' },
+                { correct: 'Phase out', incorrect: ['Remove slow', 'End up'], spanish: 'Retirar o eliminar algo gradualmente' },
+                { correct: 'Plump for', incorrect: ['Choose support', 'Select on'], spanish: 'Decidirse y elegir a alguien/algo' },
+                { correct: 'Rake in', incorrect: ['Earn massive', 'Gather up'], spanish: 'Ganar o recaudar grandes sumas de dinero' },
+                { correct: 'Sift through', incorrect: ['Examine bulk', 'Filter off'], spanish: 'Examinar detenidamente una masa de datos' },
+                { correct: 'Spark off', incorrect: ['Trigger sudden', 'Light up'], spanish: 'Desencadenar una crisis, revuelta o evento' },
+                { correct: 'Stumble upon', incorrect: ['Find accidental', 'Trip on'], spanish: 'Toparse con algo de forma fortuita' },
+                { correct: 'Tope with', incorrect: ['Comply down', 'Match with'], spanish: 'Dar la talla o competir con eficacia' }
+            ]
+        };
+
+        // ============================================================================
+        // 2. SISTEMA DE AUDIO DE 8-BITS (Web Audio API - No requiere ficheros externos)
+        // ============================================================================
+        const AudioEngine = {
+            ctx: null,
+            musicInterval: null,
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            },
+            playLaser() {
+                this.init();
+                let osc = this.ctx.createOscillator();
+                let gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(150, this.ctx.currentTime + 0.12);
+                gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.12);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.12);
+            },
+            playExplosion() {
+                this.init();
+                let bufferSize = this.ctx.sampleRate * 0.25;
+                let buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                let data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                let noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                let filter = this.ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(600, this.ctx.currentTime);
+                filter.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.25);
+                let gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.25);
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.ctx.destination);
+                noise.start();
+                noise.stop(this.ctx.currentTime + 0.25);
+            },
+            playDamage() {
+                this.init();
+                let osc = this.ctx.createOscillator();
+                let gain = this.ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+                osc.frequency.linearRampToValueAtTime(60, this.ctx.currentTime + 0.4);
+                gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.4);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.4);
+            },
+            startMusic() {
+                this.init();
+                this.stopMusic();
+                let noteIndex = 0;
+                // Melodía estilo Chiptune Arcade en bucle bajo
+                const bassline = [110, 110, 130, 110, 146, 146, 130, 165]; 
+                this.musicInterval = setInterval(() => {
+                    if(GameState.status !== 'playing') return;
+                    let osc = this.ctx.createOscillator();
+                    let gain = this.ctx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(bassline[noteIndex % bassline.length], this.ctx.currentTime);
+                    gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+                    gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.25);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + 0.28);
+                    noteIndex++;
+                }, 300);
+            },
+            stopMusic() {
+                if(this.musicInterval) clearInterval(this.musicInterval);
+            }
+        };
+
+        // ============================================================================
+        // 3. MOTOR DE JUEGO (Lógica 2D optimizada emulando naves vectoriales Low-Poly)
+        // ============================================================================
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        const GameState = {
+            status: 'lobby', // lobby, playing, gameover
+            selectedLevel: 'A1',
+            score: 0,
+            lives: 3,
+            currentPair: null,
+            speedMultiplier: 0.7 // Calibrado a 0.7x para mejor lectura pedagógica
+        };
+
+        // Entidades
+        let baseShip = { x: 0, y: 0, width: 60, height: 40, targetX: 0, speed: 12 };
+        let enemies = []; // Contiene las 3 naves activas
+        let lasers = [];
+        let particles = [];
+        let remotePlayers = {}; // Jugadores remotos conectados por PeerJS
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if(baseShip) {
+                baseShip.y = canvas.height - 80;
+                if(baseShip.x === 0) {
+                    baseShip.x = canvas.width / 2;
+                    baseShip.targetX = baseShip.x;
+                }
+            }
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        function selectLevel(lvl) {
+            GameState.selectedLevel = lvl;
+            document.querySelectorAll('.btn-level').forEach(btn => {
+                btn.classList.remove('active');
+                if(btn.innerText === lvl) btn.classList.add('active');
+            });
+            document.getElementById('hud-level').innerText = lvl;
+        }
+
+        function initHeartsUI() {
+            const container = document.getElementById('hearts-box');
+            container.innerHTML = '';
+            for(let i=0; i<3; i++) {
+                container.innerHTML += `
+                    <svg class="heart" id="heart-${i}" viewBox="0 0 24 24">
+                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                    </svg>
+                `;
+            }
+        }
+
+        function triggerDamageVisuals() {
+            AudioEngine.playDamage();
+            // Animación en el HUD del corazón restante
+            const currentHeartIndex = GameState.lives;
+            const targetHeart = document.getElementById(`heart-${currentHeartIndex}`);
+            if(targetHeart) targetHeart.classList.add('heart-damaged');
+            
+            // Destello de daño en pantalla
+            const flash = document.getElementById('damage-flash');
+            flash.style.opacity = '1';
+            setTimeout(() => flash.style.opacity = '0', 150);
+        }
+
+        function spawnWave() {
+            enemies = [];
+            const list = verbDatabase[GameState.selectedLevel];
+            const pair = list[Math.floor(Math.random() * list.length)];
+            GameState.currentPair = pair;
+            
+            document.getElementById('hud-meaning').innerText = pair.spanish;
+
+            // Mezclar opciones
+            let options = [
+                { text: pair.correct, isCorrect: true },
+                { text: pair.incorrect[0], isCorrect: false },
+                { text: pair.incorrect[1], isCorrect: false }
+            ];
+            options.sort(() => Math.random() - 0.5);
+
+            // Calcular anchos y espaciado de pantalla para las 3 naves conjuntas
+            const totalWidth = canvas.width;
+            const columnWidth = totalWidth / 4;
+
+            // Las naves se spawnean FUERA de la pantalla en la parte superior (-60)
+            options.forEach((opt, idx) => {
+                enemies.push({
+                    x: columnWidth * (idx + 1),
+                    y: -60,
+                    text: opt.text,
+                    isCorrect: opt.isCorrect,
+                    width: 140,
+                    height: 55,
+                    seed: Math.random() * 100, // Para desfasar el zig-zag independiente
+                    angle: 0
+                });
+            });
+        }
+
+        function createExplosion(x, y, color) {
+            AudioEngine.playExplosion();
+            // Generar partículas low-poly (formas geométricas angulares)
+            for(let i=0; i<25; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    size: Math.random() * 6 + 4,
+                    color: color,
+                    life: 1.0,
+                    decay: Math.random() * 0.04 + 0.02,
+                    angle: Math.random() * Math.PI,
+                    rotSpeed: (Math.random() - 0.5) * 0.2
+                });
+            }
+        }
+
+        // --- CONTROLES DE TECLADO LOCAL ---
+        const keys = {};
+        window.addEventListener('keydown', e => {
+            keys[e.code] = true;
+            if(e.code === 'Space' && GameState.status === 'playing') {
+                fireLaser(baseShip.x, baseShip.y, '#00f0ff', true);
+            }
+        });
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        function fireLaser(x, y, color, isLocal) {
+            lasers.push({ x: x, y: y - 20, vy: -14, color: color, isLocal: isLocal });
+            AudioEngine.playLaser();
+        }
+
+        // ============================================================================
+        // 4. SISTEMA MULTIJUGADOR DIRECTO CON PEERJS (Sin bases de datos)
+        // ============================================================================
+        let peer = null;
+        let myRoomId = "";
+
+        function initMultiplayerHost() {
+            myRoomId = Math.floor(1000 + Math.random() * 9000).toString();
+            document.getElementById('room-id-tag').innerText = myRoomId;
+            
+            // Inicializar objeto PeerJS usando el servidor de señalización en la nube gratuito
+            peer = new Peer('room-' + myRoomId);
+
+            peer.on('open', (id) => {
+                console.log('Lobby multijugador alojado con éxito bajo ID:', id);
+                
+                // Generar enlace para el celular (Asume controller.html en el mismo directorio de GitHub Pages)
+                const currentUrl = window.location.href.split('?')[0].replace('index.html', '');
+                const controllerLink = `${currentUrl}controller.html?room=${myRoomId}`;
+                
+                // Renderizar el QR
+                document.getElementById("qrcode").innerHTML = "";
+                new QRCode(document.getElementById("qrcode"), {
+                    text: controllerLink,
+                    width: 160,
+                    height: 160,
+                    colorDark : "#050510",
+                    colorLight : "#ffffff"
+                });
+            });
+
+            peer.on('connection', (conn) => {
+                conn.on('data', (data) => {
+                    if (data.type === 'JOIN') {
+                        remotePlayers[conn.peer] = {
+                            id: conn.peer,
+                            name: data.name,
+                            connection: conn,
+                            x: canvas.width / 2,
+                            targetX: canvas.width / 2,
+                            color: `hsl(${Math.random() * 360}, 90%, 60%)`,
+                            action: 'idle'
+                        };
+                        updateLobbyListUI();
+                    }
+                    if (data.type === 'ACTION') {
+                        if (remotePlayers[conn.peer]) {
+                            remotePlayers[conn.peer].action = data.action;
+                        }
+                    }
+                });
+
+                conn.on('close', () => {
+                    delete remotePlayers[conn.peer];
+                    updateLobbyListUI();
+                });
+            });
+        }
+
+        function updateLobbyListUI() {
+            const listContainer = document.getElementById('player-list');
+            listContainer.innerHTML = '';
+            const keys = Object.keys(remotePlayers);
+            document.getElementById('player-count').innerText = keys.length;
+
+            keys.forEach(id => {
+                const p = remotePlayers[id];
+                listContainer.innerHTML += `
+                    <div class="player-item">
+                        <span style="font-weight:bold; color:${p.color}">${p.name}</span>
+                        <button class="btn-kick" onclick="kickPlayer('${id}')">Expulsar</button>
+                    </div>
+                `;
+            });
+        }
+
+        function kickPlayer(id) {
+            if (remotePlayers[id]) {
+                remotePlayers[id].connection.send({ type: 'KICKED' });
+                remotePlayers[id].connection.close();
+                delete remotePlayers[id];
+                updateLobbyListUI();
+            }
+        }
+
+        // ============================================================================
+        // 5. BUCLE PRINCIPAL DE RENDERIZADO Y ACTUALIZACIÓN
+        // ============================================================================
+        function updateAndRender() {
+            // Limpieza del lienzo con estela retro
+            ctx.fillStyle = 'rgba(5, 5, 16, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Dibujar fondo de estrellas matemáticas fijas
+            ctx.fillStyle = '#ffffff';
+            for(let i=0; i<30; i++) {
+                let starX = (Math.sin(i * 4329.23) * 0.5 + 0.5) * canvas.width;
+                let starY = (Math.cos(i * 2394.12) * 0.5 + 0.5) * canvas.height;
+                ctx.fillRect(starX, starY, 1.5, 1.5);
+            }
+
+            if (GameState.status === 'playing') {
+                // --- MOVIMIENTO LOCAL ---
+                if (keys['ArrowLeft'] || keys['KeyA']) baseShip.targetX -= baseShip.speed;
+                if (keys['ArrowRight'] || keys['KeyD']) baseShip.targetX += baseShip.speed;
+                baseShip.targetX = Math.max(40, Math.min(canvas.width - 40, baseShip.targetX));
+                baseShip.x += (baseShip.targetX - baseShip.x) * 0.2;
+
+                // Dibujar Tanque/Nave Local (Diseño Angular Low-Poly)
+                drawLowPolyShip(baseShip.x, baseShip.y, '#00f0ff', 'TÚ');
+
+                // --- PROCESAR JUGADORES REMOTOS ---
+                Object.keys(remotePlayers).forEach(id => {
+                    let p = remotePlayers[id];
+                    if (p.action === 'left') p.targetX -= baseShip.speed;
+                    if (p.action === 'right') p.targetX += baseShip.speed;
+                    if (p.action === 'shoot') {
+                        fireLaser(p.x, baseShip.y, p.color, false);
+                        p.action = 'idle'; // Reiniciar ráfaga
+                    }
+                    p.targetX = Math.max(40, Math.min(canvas.width - 40, p.targetX));
+                    p.x += (p.targetX - p.x) * 0.2;
+                    
+                    drawLowPolyShip(p.x, baseShip.y, p.color, p.name);
+                });
+
+                // --- LOGICA DE ENEMIGOS (Naves Verbo en Zig-Zag y ritmo 0.7x) ---
+                if (enemies.length === 0) {
+                    spawnWave();
+                }
+
+                let waveCrossedBottom = false;
+
+                enemies.forEach(enemy => {
+                    // Descenso uniforme a velocidad modificada (0.7)
+                    enemy.y += 2.0 * GameState.speedMultiplier;
+                    // Oscilación lateral (Zig-zag) geométrica limpia
+                    enemy.angle += 0.04;
+                    enemy.xOffset = Math.sin(enemy.angle + enemy.seed) * 3.5;
+                    
+                    let drawX = enemy.x + enemy.xOffset;
+
+                    // Dibujar Nave enemiga Low-Poly (Polígonos visibles estilo alón plano)
+                    ctx.save();
+                    ctx.translate(drawX, enemy.y);
+                    
+                    // Cuerpo de la nave extraterrestre angular
+                    ctx.fillStyle = enemy.isCorrect ? '#1a1a3a' : '#2a1020';
+                    ctx.strokeStyle = enemy.isCorrect ? '#00f0ff' : '#ff0055';
+                    ctx.lineWidth = 2;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(0, -25);
+                    ctx.lineTo(60, 5);
+                    ctx.lineTo(25, 25);
+                    ctx.lineTo(-25, 25);
+                    ctx.lineTo(-60, 5);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Núcleo brillante
+                    ctx.fillStyle = enemy.isCorrect ? '#00f0ff' : '#ff0055';
+                    ctx.beginPath();
+                    ctx.moveTo(0, -10);
+                    ctx.lineTo(15, 10);
+                    ctx.lineTo(-15, 10);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Renderizar el Texto del Phrasal Verb centrado
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 16px "Courier New", Courier, monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    // Sombra de lectura
+                    ctx.fillStyle = '#000';
+                    ctx.fillText(enemy.text, 1, 1);
+                    ctx.fillStyle = '#fff';
+                    ctx.fillText(enemy.text, 0, 0);
+                    ctx.restore();
+
+                    // Si cruzan la línea crítica inferior de defensa
+                    if (enemy.y > canvas.height - 120) {
+                        waveCrossedBottom = true;
+                    }
+                });
+
+                // Si la oleada tocó fondo, se penaliza si era el correcto o reinicia
+                if (waveCrossedBottom) {
+                    let correctEnemy = enemies.find(e => e.isCorrect);
+                    createExplosion(correctEnemy.x, canvas.height - 130, '#ff0055');
+                    GameState.lives--;
+                    triggerDamageVisuals();
+                    checkGameOver();
+                    enemies = []; // Limpiar para forzar respawn
+                }
+
+                // --- PROCESAR LASERS ---
+                for (let i = lasers.length - 1; i >= 0; i--) {
+                    let l = lasers[i];
+                    l.y += l.vy;
+
+                    // Dibujar rayo láser vectorial
+                    ctx.strokeStyle = l.color;
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(l.x, l.y);
+                    ctx.lineTo(l.x, l.y + 15);
+                    ctx.stroke();
+
+                    // Detectar colisiones con las naves verbo
+                    for (let j = enemies.length - 1; j >= 0; j--) {
+                        let e = enemies[j];
+                        let enemyDrawX = e.x + (e.xOffset || 0);
+                        
+                        if (l.x > enemyDrawX - 60 && l.x < enemyDrawX + 60 && l.y > e.y - 25 && l.y < e.y + 25) {
+                            // Impacto detectado
+                            createExplosion(enemyDrawX, e.y, e.isCorrect ? '#00f0ff' : '#ff0055');
+                            
+                            if (e.isCorrect) {
+                                // ¡Acierto pedagógico!
+                                GameState.score += 100;
+                                document.getElementById('hud-score').innerText = GameState.score.toString().padStart(4, '0');
+                                enemies = []; // Destruye toda la oleada inmediatamente
+                            } else {
+                                // Error: Disparó al phrasal verb incorrecto. Penalización directa de vida
+                                GameState.lives--;
+                                triggerDamageVisuals();
+                                checkGameOver();
+                                enemies = []; // Limpiar oleada
+                            }
+                            lasers.splice(i, 1);
+                            break;
+                        }
+                    }
+
+                    // Remover láser fuera de la pantalla
+                    if (l && l.y < 0) lasers.splice(i, 1);
+                }
+            }
+
+            // --- ACTUALIZAR Y DIBUJAR PARTICULAS DE EXPLOSIÓN LOW POLY ---
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.angle += p.rotSpeed;
+                p.life -= p.decay;
+
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.angle);
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life;
+                
+                // Dibujar fragmento triangular/cuadrado (Low-poly)
+                ctx.beginPath();
+                ctx.moveTo(0, -p.size);
+                ctx.lineTo(p.size, p.size);
+                ctx.lineTo(-p.size, p.size);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+            ctx.globalAlpha = 1.0;
+
+            requestAnimationFrame(updateAndRender);
+        }
+
+        function drawLowPolyShip(x, y, color, label) {
+            ctx.save();
+            ctx.translate(x, y);
+            
+            // Alas / Estructura exterior base
+            ctx.fillStyle = '#111125';
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, -20);
+            ctx.lineTo(30, 15);
+            ctx.lineTo(15, 20);
+            ctx.lineTo(-15, 20);
+            ctx.lineTo(-30, 15);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Cabina central angular
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(0, -10);
+            ctx.lineTo(8, 10);
+            ctx.lineTo(-8, 10);
+            ctx.closePath();
+            ctx.fill();
+
+            // Etiqueta identificadora del alumno
+            ctx.fillStyle = '#aaa';
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(label, 0, 35);
+            ctx.restore();
+        }
+
+        function startGame() {
+            AudioEngine.startMusic();
+            document.getElementById('lobby-screen').classList.add('hidden');
+            document.getElementById('gameover-screen').classList.add('hidden');
+            
+            GameState.status = 'playing';
+            GameState.score = 0;
+            GameState.lives = 3;
+            document.getElementById('hud-score').innerText = '0000';
+            
+            initHeartsUI();
+            enemies = [];
+            lasers = [];
+        }
+
+        function checkGameOver() {
+            if (GameState.lives <= 0) {
+                GameState.status = 'gameover';
+                AudioEngine.stopMusic();
+                document.getElementById('final-score').innerText = GameState.score;
+                document.getElementById('gameover-screen').classList.remove('hidden');
+            }
+        }
+
+        function resetToLobby() {
+            GameState.status = 'lobby';
+            document.getElementById('gameover-screen').classList.add('hidden');
+            document.getElementById('lobby-screen').classList.remove('hidden');
+        }
+
+        // Inicialización automática
+        resizeCanvas();
+        initMultiplayerHost();
+        requestAnimationFrame(updateAndRender);
+    </script>
+</body>
+</html>
